@@ -50,8 +50,8 @@ func (sd *SenderData) Init() {
     flag.StringVar(&sd.MailList, "l", "mail_list", "MailTo User List `File Path`")
     flag.StringVar(&sd.ToolsArgs.SendLogPath, "log", "send.log", "Send Log `File Path`")
     flag.StringVar(&sd.ToolsArgs.SendProfileConfigPath, "c", "senders.json", "Send Profile `Config File Path`")
-    flag.DurationVar(&sd.ToolsArgs.Timeout, "t", 5 * time.Second, "Send to STMP `Timeout` sec")
-    flag.DurationVar(&sd.ToolsArgs.DelayToSend, "delay", 200 * time.Millisecond, "Send to STMP `Timeout` ms")
+    flag.DurationVar(&sd.ToolsArgs.Timeout, "t", 5 * time.Second, "Send to STMP `Timeout`")
+    flag.DurationVar(&sd.ToolsArgs.DelayToSend, "delay", 200 * time.Millisecond, "Send to STMP `Delay`")
     flag.Parse()
 
     sendLogPath = sd.ToolsArgs.SendLogPath
