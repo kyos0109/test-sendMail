@@ -94,7 +94,6 @@ func main() {
     }
 
     for {
-
         var wg sync.WaitGroup
         wgMax = len(sd.SendersProfile) * len(sd.MailList)
         wg.Add(wgMax)
@@ -121,12 +120,12 @@ func main() {
         fmt.Printf("Send Total Count: %d\n", sd.SendCount)
         fmt.Printf("Send Fail Total Count: %d\n", sd.SendFailCount)
 
-        if sd.ToolsArgs.ForLoop == false {
+        if !sd.ToolsArgs.ForLoop {
             break
         }
-        fmt.Printf("修但幾咧....\n")
 
-        time.Sleep(sd.ToolsArgs.ForLoopWait * time.Second)
+        fmt.Printf("修但幾咧....\n")
+        time.Sleep(sd.ToolsArgs.ForLoopWait)
     }
 }
 
