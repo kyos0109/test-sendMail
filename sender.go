@@ -11,6 +11,7 @@ import (
     "time"
     "encoding/json"
     "io"
+    "sync"
 )
 
 var (
@@ -20,12 +21,14 @@ var (
 
 
 type SenderData struct {
-    Subject   string
-    Message   string
-    MailList  string
-    ToolsArgs ToolsArgs
+    Subject         string
+    MailList        []string
+    MailListPath    string
+    MailContentPath string
+    MailContent     string
+    ToolsArgs       ToolsArgs
 
-    SendersProfile []SenderProfile `json:"sendersprofile"`
+    SendersProfile []SenderProfile `json:"SenderSprofile"`
 }
 
 type ToolsArgs struct {
@@ -33,6 +36,7 @@ type ToolsArgs struct {
     DelayToSend           time.Duration
     SendLogPath           string
     SendProfileConfigPath string
+    SendProfileConfig     []byte
 }
 
 type SenderProfile struct {
@@ -46,8 +50,8 @@ type SenderProfile struct {
 func (sd *SenderData) Init() {
     flag.BoolVar(&help, "help", false, "This Help")
     flag.StringVar(&sd.Subject, "s", "！！！ＩＭＰＯＲＴＡＮＴ！！！", "Message `Subject`")
-    flag.StringVar(&sd.Message, "m", "edm.html", "Message Content `File Path`")
-    flag.StringVar(&sd.MailList, "l", "mail_list", "MailTo User List `File Path`")
+    flag.StringVar(&sd.MailContentPath, "m", "edm.html", "Message Content `File Path`")
+    flag.StringVar(&sd.MailListPath, "l", "mail_list", "MailTo User List `File Path`")
     flag.StringVar(&sd.ToolsArgs.SendLogPath, "log", "send.log", "Send Log `File Path`")
     flag.StringVar(&sd.ToolsArgs.SendProfileConfigPath, "c", "senders.json", "Send Profile `Config File Path`")
     flag.DurationVar(&sd.ToolsArgs.Timeout, "t", 5 * time.Second, "Send to STMP `Timeout`")
@@ -71,83 +75,93 @@ func main() {
 
     var sd SenderData
     sd.Init()
+    sd.MailContent = sd.setMailContent()
+    sd.MailList = sd.setMailList()
+    sd.ToolsArgs.SendProfileConfig = sd.setSenderProfileConfig()
 
-    dat, err := ioutil.ReadFile(sd.Message)
-    if err != nil {
-        log.Fatalf("***Error: %s", err)
-    }
-    log.Println("Open Mail Content File Successfully.")
-
-    mailList, err := readLines(sd.MailList)
-    if err != nil {
-        log.Fatalf("***Error: %s", err)
-    }
-    log.Println("Open Mail List File Successfully.")
-
-    sendersJson, err := ioutil.ReadFile(sd.ToolsArgs.SendProfileConfigPath)
-    if err != nil {
-        log.Fatalf("***Error: %s", err)
-    }
-    log.Println("Open Senders Config File Successfully.")
-
-    if err := json.Unmarshal(sendersJson, &sd); err != nil {
+    if err := json.Unmarshal(sd.ToolsArgs.SendProfileConfig, &sd); err != nil {
         fmt.Println(err)
     }
 
-    ch := make(chan string)
+    var wg sync.WaitGroup
+    wg.Add(len(sd.SendersProfile) * len(sd.MailList))
 
     for si, sp := range sd.SendersProfile {
         log.Printf("Send Starting... %s", sp.MailFrom)
 
         d := gomail.NewDialer(sp.SMTPHost, 587, sp.UserName, sp.Passowrd)
 
-        for i, r := range mailList {
+        for i, r := range sd.MailList {
             time.Sleep(sd.ToolsArgs.DelayToSend)
-            go func(r string, i, si int) {
-                __connect, err := d.Dial()
-                if err != nil {
-                    panic(err)
-                }
-
-                m := buildMailContent(&sd, &r, &dat, &si)
-
-                if err := gomail.Send(__connect, m); err != nil {
-                    ch <- fmt.Sprintf("Error: Could not send email to %q: %v", &r, err)
-                } else {
-                    ch <- fmt.Sprintf("Num: %d, %s Send --> %q", i+1, sd.SendersProfile[si].MailFrom, r)
-                }
-                m.Reset()
-            }(r, i, si)
-        }
-
-    }
-
-    for {
-        select {
-        case r := <-ch:
-            writeLog(r)
-
-        case <-time.After(sd.ToolsArgs.Timeout):
-            log.Println("--> Bye...")
-            return
+            go sd.doSend(r, i, si, d, &wg)
+            // go func(r string, i, si int) {
+            // }(r, i, si)
         }
     }
+    wg.Wait()
 }
 
-func buildMailContent (sd *SenderData, r *string, dat *[]byte, si *int) *gomail.Message {
+func (sd *SenderData) doSend (mailTo string, mailToCount, senderConfigCount int, newDial *gomail.Dialer, wg *sync.WaitGroup) {
+    defer wg.Done()
+    __connect, err := newDial.Dial()
+    if err != nil {
+        panic(err)
+    }
+
+    m := sd.buildMailContent(&mailTo, &senderConfigCount)
+
+    if err := gomail.Send(__connect, m); err != nil {
+        writeLog(fmt.Sprintf("Error: Could not send email to %q: %v", mailTo, err))
+    } else {
+        writeLog(fmt.Sprintf("Num: %d, %s Send --> %q", mailToCount+1, sd.SendersProfile[senderConfigCount].MailFrom, mailTo))
+    }
+    m.Reset()
+}
+
+func (sd *SenderData) setMailContent () string {
+    data, err := ioutil.ReadFile(sd.MailContentPath)
+    if err != nil {
+        log.Fatalf("***Error: %s", err)
+    }
+    log.Println("Open Mail Content File Successfully.")
+
+    return string(data)
+}
+
+func (sd *SenderData) setMailList () []string {
+    mailList, err := readLines(sd.MailListPath)
+    if err != nil {
+        log.Fatalf("***Error: %s", err)
+    }
+    log.Println("Open Mail List File Successfully.")
+
+    return mailList
+}
+
+func (sd *SenderData) setSenderProfileConfig () []byte {
+    sendersJson, err := ioutil.ReadFile(sd.ToolsArgs.SendProfileConfigPath)
+    if err != nil {
+        log.Fatalf("***Error: %s", err)
+    }
+    log.Println("Open Senders Config File Successfully.")
+
+    return sendersJson
+}
+
+func (sd *SenderData) buildMailContent (mailTo *string, senderConfigCount *int) *gomail.Message {
     m := gomail.NewMessage(gomail.SetEncoding(gomail.Base64))
-    m.SetHeader("From", m.FormatAddress(sd.SendersProfile[*si].MailFrom, sd.SendersProfile[*si].MailFromName))
-    m.SetHeader("To", *r)
+    m.SetHeader("From", m.FormatAddress(sd.SendersProfile[*senderConfigCount].MailFrom, sd.SendersProfile[*senderConfigCount].MailFromName))
+    m.SetHeader("To", *mailTo)
     m.SetHeader("Subject", sd.Subject)
     m.SetHeader("X-Spam-Flag", "YES")
     m.SetHeader("X-Spam-Level", "*************")
     m.SetHeader("X-Spam-Status", "Yes, score=13.7 required=5.0 tests=BAYES_99,HS_INDEX_PARAM,HTML_MESSAGE,RCVD_IN_PBL,RCVD_IN_SORBS_DUL,RDNS_NONE,URIBL_AB_SURBL,URIBL_BLACK,URIBL_JP_SURBL,URIBL_SBL,URIBL_WS_SURBL autolearn=spam version=3.2.5")
-    m.SetBody("text/html", string(*dat))
+    m.SetBody("text/html", sd.MailContent)
 
     return m
 }
 
-func writeLog(l string) {
+func writeLog(logContent string) {
     f, err := os.OpenFile(sendLogPath, os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
     if err != nil {
         log.Fatalf("error opening file: %v", err)
@@ -156,7 +170,7 @@ func writeLog(l string) {
 
     wrt := io.MultiWriter(os.Stdout, f)
     log.SetOutput(wrt)
-    log.Println(l)
+    log.Println(logContent)
 }
 
 func readLines(path string) ([]string, error) {
