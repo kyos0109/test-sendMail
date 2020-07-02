@@ -4,19 +4,20 @@ import (
     "fmt"
     "flag"
     "log"
-    "gopkg.in/gomail.v2"
     "io/ioutil"
     "os"
     "bufio"
     "time"
     "encoding/json"
-    "io"
     "sync"
+    "gopkg.in/gomail.v2"
+    "github.com/cheggaaa/pb/v3"
 )
 
 var (
     help bool
     sendLogPath string
+    wgMax int
 )
 
 
@@ -27,6 +28,9 @@ type SenderData struct {
     MailContentPath string
     MailContent     string
     ToolsArgs       ToolsArgs
+    SendCount       int
+    SendFailCount   int
+    SendCountLock   sync.Mutex
 
     SendersProfile []SenderProfile `json:"SenderSprofile"`
 }
@@ -37,6 +41,8 @@ type ToolsArgs struct {
     SendLogPath           string
     SendProfileConfigPath string
     SendProfileConfig     []byte
+    ForLoopWait           time.Duration
+    ForLoop               bool
 }
 
 type SenderProfile struct {
@@ -49,6 +55,7 @@ type SenderProfile struct {
 
 func (sd *SenderData) Init() {
     flag.BoolVar(&help, "help", false, "This Help")
+    flag.BoolVar(&sd.ToolsArgs.ForLoop, "loop", false, "Open For Loop.")
     flag.StringVar(&sd.Subject, "s", "！！！ＩＭＰＯＲＴＡＮＴ！！！", "Message `Subject`")
     flag.StringVar(&sd.MailContentPath, "m", "edm.html", "Message Content `File Path`")
     flag.StringVar(&sd.MailListPath, "l", "mail_list", "MailTo User List `File Path`")
@@ -56,6 +63,7 @@ func (sd *SenderData) Init() {
     flag.StringVar(&sd.ToolsArgs.SendProfileConfigPath, "c", "senders.json", "Send Profile `Config File Path`")
     flag.DurationVar(&sd.ToolsArgs.Timeout, "t", 5 * time.Second, "Send to STMP `Timeout`")
     flag.DurationVar(&sd.ToolsArgs.DelayToSend, "delay", 200 * time.Millisecond, "Send to STMP `Delay`")
+    flag.DurationVar(&sd.ToolsArgs.ForLoopWait, "wait", 60 * time.Second, "For Loop Wait For Next.")
     flag.Parse()
 
     sendLogPath = sd.ToolsArgs.SendLogPath
@@ -75,33 +83,60 @@ func main() {
 
     var sd SenderData
     sd.Init()
+    sd.SendCount = 0
     sd.MailContent = sd.setMailContent()
     sd.MailList = sd.setMailList()
     sd.ToolsArgs.SendProfileConfig = sd.setSenderProfileConfig()
+
 
     if err := json.Unmarshal(sd.ToolsArgs.SendProfileConfig, &sd); err != nil {
         fmt.Println(err)
     }
 
-    var wg sync.WaitGroup
-    wg.Add(len(sd.SendersProfile) * len(sd.MailList))
+    for {
 
-    for si, sp := range sd.SendersProfile {
-        log.Printf("Send Starting... %s", sp.MailFrom)
+        var wg sync.WaitGroup
+        wgMax = len(sd.SendersProfile) * len(sd.MailList)
+        wg.Add(wgMax)
 
-        d := gomail.NewDialer(sp.SMTPHost, 587, sp.UserName, sp.Passowrd)
+        bar := pb.Full.Start(wgMax)
+        log.Println("Starting...")
+        for si, sp := range sd.SendersProfile {
+            writeLog(fmt.Sprintf("---------------------------------------------"))
+            writeLog(fmt.Sprintf("Send Starting... %s ", sp.MailFrom))
+            writeLog(fmt.Sprintf("---------------------------------------------"))
 
-        for i, r := range sd.MailList {
-            time.Sleep(sd.ToolsArgs.DelayToSend)
-            go sd.doSend(r, i, si, d, &wg)
-            // go func(r string, i, si int) {
-            // }(r, i, si)
+            d := gomail.NewDialer(sp.SMTPHost, 587, sp.UserName, sp.Passowrd)
+
+            for i, r := range sd.MailList {
+                time.Sleep(sd.ToolsArgs.DelayToSend)
+                go sd.doSend(r, i, si, d, &wg)
+                bar.Increment()
+            }
         }
+        wg.Wait()
+        bar.Finish()
+
+        fmt.Println("Done.")
+        fmt.Printf("Send Total Count: %d\n", sd.SendCount)
+        fmt.Printf("Send Fail Total Count: %d\n", sd.SendFailCount)
+
+        if sd.ToolsArgs.ForLoop == false {
+            break
+        }
+        fmt.Printf("修但幾咧....\n")
+
+        time.Sleep(sd.ToolsArgs.ForLoopWait * time.Second)
     }
-    wg.Wait()
 }
 
-func (sd *SenderData) doSend (mailTo string, mailToCount, senderConfigCount int, newDial *gomail.Dialer, wg *sync.WaitGroup) {
+func (sd *SenderData) doSend (
+    mailTo string,
+    mailToCount,
+    senderConfigCount int,
+    newDial *gomail.Dialer,
+    wg *sync.WaitGroup) {
+
     defer wg.Done()
     __connect, err := newDial.Dial()
     if err != nil {
@@ -111,9 +146,22 @@ func (sd *SenderData) doSend (mailTo string, mailToCount, senderConfigCount int,
     m := sd.buildMailContent(&mailTo, &senderConfigCount)
 
     if err := gomail.Send(__connect, m); err != nil {
+        sd.SendCountLock.Lock()
+        sd.SendFailCount++
+        sd.SendCountLock.Unlock()
         writeLog(fmt.Sprintf("Error: Could not send email to %q: %v", mailTo, err))
     } else {
-        writeLog(fmt.Sprintf("Num: %d, %s Send --> %q", mailToCount+1, sd.SendersProfile[senderConfigCount].MailFrom, mailTo))
+        sd.SendCountLock.Lock()
+        sd.SendCount++
+        sd.SendCountLock.Unlock()
+        writeLog(
+            fmt.Sprintf(
+                "Count: %05d, Profile: %02d, Num: %03d, %s Send --> %q",
+                sd.SendCount,
+                senderConfigCount+1,
+                mailToCount+1,
+                sd.SendersProfile[senderConfigCount].MailFrom,
+                mailTo))
     }
     m.Reset()
 }
@@ -168,8 +216,7 @@ func writeLog(logContent string) {
     }
     defer f.Close()
 
-    wrt := io.MultiWriter(os.Stdout, f)
-    log.SetOutput(wrt)
+    log.SetOutput(f)
     log.Println(logContent)
 }
 
