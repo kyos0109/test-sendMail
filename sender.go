@@ -51,6 +51,7 @@ type SenderProfile struct {
     Passowrd     string `json:"Passowrd"`
     MailFrom     string `json:"MailFrom"`
     MailFromName string `json:"MailFromName"`
+    Enable       bool   `json:"Enable"`
 }
 
 func (sd *SenderData) Init() {
@@ -97,9 +98,11 @@ func main() {
         bar := pb.Full.Start(taskMax)
         log.Println("Starting...")
         for si, sp := range sd.SendersProfile {
+
             writeLog(fmt.Sprintf("---------------------------------------------"))
             writeLog(fmt.Sprintf("Send Starting... %s ", sp.MailFrom))
             writeLog(fmt.Sprintf("---------------------------------------------"))
+
 
             d := gomail.NewDialer(sp.SMTPHost, 587, sp.UserName, sp.Passowrd)
 
@@ -130,6 +133,18 @@ func (sd *SenderData) initProfileConfig () {
     if err := json.Unmarshal(sd.ToolsArgs.SendProfileConfig, &sd); err != nil {
         fmt.Println(err)
         os.Exit(255)
+    }
+
+    for i := len(sd.SendersProfile) - 1; i >= 0; i-- {
+        if !sd.SendersProfile[i].Enable {
+            sd.SendersProfile[i] = sd.SendersProfile[len(sd.SendersProfile)-1]
+            sd.SendersProfile[len(sd.SendersProfile)-1] = SenderProfile{}
+            sd.SendersProfile = sd.SendersProfile[:len(sd.SendersProfile)-1]
+        }
+    }
+
+    if len(sd.SendersProfile) == 0 {
+        log.Fatalf("Not Senders Profile Enable....Bye.")
     }
 }
 
