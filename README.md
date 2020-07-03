@@ -33,14 +33,16 @@ sender.json
       "UserName": "test_sender",
       "Passowrd": "password",
       "MailFrom": "notify@test01.example.com",
-      "MailFromName": "noreply"
+      "MailFromName": "noreply",
+      "Enable": true
     },
     {
       "SMTPHost": "192.168.0.10",
       "UserName": "test_sender",
       "Passowrd": "password",
       "MailFrom": "notify@test02.example.com",
-      "MailFromName": "noreply"
+      "MailFromName": "noreply",
+      "Enable": false
     },
   ]
 }
