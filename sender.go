@@ -17,7 +17,7 @@ import (
 var (
     help bool
     sendLogPath string
-    wgMax int
+    taskMax int
 )
 
 
@@ -30,7 +30,7 @@ type SenderData struct {
     ToolsArgs       ToolsArgs
     SendCount       int
     SendFailCount   int
-    SendCountLock   sync.Mutex
+    SendCountLock   sync.RWMutex
 
     SendersProfile []SenderProfile `json:"SenderSprofile"`
 }
@@ -87,18 +87,14 @@ func main() {
     sd.MailContent = sd.setMailContent()
     sd.MailList = sd.setMailList()
     sd.ToolsArgs.SendProfileConfig = sd.setSenderProfileConfig()
+    sd.initProfileConfig()
 
-
-    if err := json.Unmarshal(sd.ToolsArgs.SendProfileConfig, &sd); err != nil {
-        fmt.Println(err)
-    }
+    taskMax = len(sd.SendersProfile) * len(sd.MailList)
 
     for {
         var wg sync.WaitGroup
-        wgMax = len(sd.SendersProfile) * len(sd.MailList)
-        wg.Add(wgMax)
 
-        bar := pb.Full.Start(wgMax)
+        bar := pb.Full.Start(taskMax)
         log.Println("Starting...")
         for si, sp := range sd.SendersProfile {
             writeLog(fmt.Sprintf("---------------------------------------------"))
@@ -109,6 +105,7 @@ func main() {
 
             for i, r := range sd.MailList {
                 time.Sleep(sd.ToolsArgs.DelayToSend)
+                wg.Add(1)
                 go sd.doSend(r, i, si, d, &wg)
                 bar.Increment()
             }
@@ -129,6 +126,13 @@ func main() {
     }
 }
 
+func (sd *SenderData) initProfileConfig () {
+    if err := json.Unmarshal(sd.ToolsArgs.SendProfileConfig, &sd); err != nil {
+        fmt.Println(err)
+        os.Exit(255)
+    }
+}
+
 func (sd *SenderData) doSend (
     mailTo string,
     mailToCount,
@@ -137,6 +141,7 @@ func (sd *SenderData) doSend (
     wg *sync.WaitGroup) {
 
     defer wg.Done()
+
     __connect, err := newDial.Dial()
     if err != nil {
         panic(err)
@@ -153,6 +158,7 @@ func (sd *SenderData) doSend (
         sd.SendCountLock.Lock()
         sd.SendCount++
         sd.SendCountLock.Unlock()
+        sd.SendCountLock.RLock()
         writeLog(
             fmt.Sprintf(
                 "Count: %05d, Profile: %02d, Num: %03d, %s Send --> %q",
@@ -161,6 +167,7 @@ func (sd *SenderData) doSend (
                 mailToCount+1,
                 sd.SendersProfile[senderConfigCount].MailFrom,
                 mailTo))
+        sd.SendCountLock.RUnlock()
     }
     m.Reset()
 }
