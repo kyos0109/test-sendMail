@@ -31,6 +31,7 @@ type SenderData struct {
     SendCount       int
     SendFailCount   int
     SendCountLock   sync.RWMutex
+    SendDialer      []*gomail.Dialer
 
     SendersProfile []SenderProfile `json:"SenderSprofile"`
 }
@@ -103,13 +104,9 @@ func main() {
             writeLog(fmt.Sprintf("Send Starting... %s ", sp.MailFrom))
             writeLog(fmt.Sprintf("---------------------------------------------"))
 
-
-            d := gomail.NewDialer(sp.SMTPHost, 587, sp.UserName, sp.Passowrd)
-
             for i, r := range sd.MailList {
                 time.Sleep(sd.ToolsArgs.DelayToSend)
-                wg.Add(1)
-                go sd.doSend(r, i, si, d, &wg)
+                go sd.doSend(r, i, si, &wg)
                 bar.Increment()
             }
         }
@@ -152,19 +149,26 @@ func (sd *SenderData) doSend (
     mailTo string,
     mailToCount,
     senderConfigCount int,
-    newDial *gomail.Dialer,
     wg *sync.WaitGroup) {
 
+    wg.Add(1)
     defer wg.Done()
 
-    __connect, err := newDial.Dial()
+    d := gomail.NewDialer(
+        sd.SendersProfile[senderConfigCount].SMTPHost,
+        587,
+        sd.SendersProfile[senderConfigCount].UserName,
+        sd.SendersProfile[senderConfigCount].Passowrd)
+
+    c, err := d.Dial()
     if err != nil {
+        fmt.Println(sd.SendersProfile[senderConfigCount].MailFrom)
         panic(err)
     }
 
     m := sd.buildMailContent(&mailTo, &senderConfigCount)
 
-    if err := gomail.Send(__connect, m); err != nil {
+    if err := gomail.Send(c, m); err != nil {
         sd.SendCountLock.Lock()
         sd.SendFailCount++
         sd.SendCountLock.Unlock()
